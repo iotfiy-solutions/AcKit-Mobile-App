@@ -1,0 +1,46 @@
+{
+  "expo": {
+    "name": "Ac Kit",
+    "slug": "ac-kit",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.iotfiysolutions.ackitkit"
+    },
+    "android": {
+      "package": "com.iotfiysolutions.ackitkit",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": false,
+      "navigationBar": {
+        "visible": false,
+        "behavior": "overlay-swipe",
+        "barStyle": "dark-content"
+      }
+    },
+    "plugins": [
+      "expo-navigation-bar"
+    ],
+    "web": {
+      "favicon": "./assets/favicon.svg"
+    },
+    "owner": "umarwaqar12",
+    "extra": {
+      "expo-navigation-bar": {},
+      "eas": {
+        "projectId": "884f2421-3f6b-43a5-97e1-72c243a18b11"
+      }
+    }
+  }
+}
