@@ -27,10 +27,24 @@
         "visible": false,
         "behavior": "overlay-swipe",
         "barStyle": "dark-content"
+      },
+      "splash": {
+        "image": "./assets/splash-icon.png",
+        "resizeMode": "contain",
+        "backgroundColor": "#ffffff"
       }
     },
     "plugins": [
-      "expo-navigation-bar"
+      "expo-navigation-bar",
+      "expo-status-bar",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff"
+        }
+      ]
     ],
     "web": {
       "favicon": "./assets/favicon.svg"

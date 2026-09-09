@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
   AppState,
   Platform,
   RefreshControl,
@@ -15,6 +14,7 @@ import {
 } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import * as NavigationBar from 'expo-navigation-bar';
+import * as SplashScreen from 'expo-splash-screen';
 import * as SystemUI from 'expo-system-ui';
 
 const WEBSITE_URL = 'https://ackit.iotfiysolutions.com';
@@ -22,6 +22,7 @@ const WEBSITE_URL = 'https://ackit.iotfiysolutions.com';
 const TOP_REFRESH_ZONE = 0.2;
 
 SystemUI.setBackgroundColorAsync('#ffffff').catch(() => {});
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 /**
  * Mushaba-style Android system nav hide.
@@ -40,8 +41,8 @@ async function setupNavigationBar() {
 
 /**
  * Mobile WebView app only:
- * 1) Opaque website bottom nav (no content bleed-through)
- * 2) Pad scroll content so page end sits ABOVE the fixed bottom nav
+ * Opaque website bottom nav (no content bleed-through).
+ * Do NOT inject padding-bottom — the website already reserves nav space.
  */
 const BRIDGE_JS = `
 (function () {
@@ -79,23 +80,6 @@ const BRIDGE_JS = `
       nav.style.setProperty('backdrop-filter', 'none', 'important');
       nav.style.setProperty('-webkit-backdrop-filter', 'none', 'important');
       nav.style.setProperty('z-index', '9999', 'important');
-
-      var h = Math.ceil(nav.getBoundingClientRect().height || 56);
-      var pad = h + 8;
-      document.documentElement.style.setProperty('--ackit-app-nav-h', pad + 'px');
-      if (document.body) {
-        document.body.style.setProperty('padding-bottom', pad + 'px', 'important');
-        document.body.style.setProperty('box-sizing', 'border-box', 'important');
-      }
-      var mains = document.querySelectorAll('main, [class*="overflow-auto"], [class*="overflow-y-auto"]');
-      for (var i = 0; i < mains.length; i++) {
-        var el = mains[i];
-        if (!el || !el.style) continue;
-        var cs = window.getComputedStyle(el);
-        if (cs.overflowY === 'auto' || cs.overflowY === 'scroll' || (el.className && String(el.className).indexOf('overflow') !== -1)) {
-          el.style.setProperty('padding-bottom', pad + 'px', 'important');
-        }
-      }
     } catch (e) {}
   }
 
@@ -123,7 +107,6 @@ const BRIDGE_JS = `
 function AppContent() {
   const webRef = useRef(null);
   const appState = useRef(AppState.currentState);
-  const [initialLoading, setInitialLoading] = useState(true);
   const initialDoneRef = useRef(false);
   const [refreshing, setRefreshing] = useState(false);
   const [atPageTop, setAtPageTop] = useState(true);
@@ -158,10 +141,14 @@ function AppContent() {
   const finishInitialLoad = useCallback(() => {
     if (initialDoneRef.current) return;
     initialDoneRef.current = true;
-    setInitialLoading(false);
     setRefreshing(false);
     setupNavigationBar();
+    SplashScreen.hideAsync().catch(() => {});
   }, []);
+
+  const handleWebViewError = useCallback(() => {
+    finishInitialLoad();
+  }, [finishInitialLoad]);
 
   const onRefresh = useCallback(() => {
     if (!refreshEnabled) return;
@@ -253,8 +240,8 @@ function AppContent() {
                 setRefreshing(false);
               }
             }}
-            onError={finishInitialLoad}
-            onHttpError={finishInitialLoad}
+            onError={handleWebViewError}
+            onHttpError={handleWebViewError}
             onScroll={onWebScroll}
             onMessage={onWebMessage}
             injectedJavaScript={BRIDGE_JS}
@@ -269,11 +256,6 @@ function AppContent() {
             pullToRefreshEnabled={false}
           />
         </ScrollView>
-        {initialLoading ? (
-          <View style={styles.loader} pointerEvents="none">
-            <ActivityIndicator size="large" color="#2563eb" />
-          </View>
-        ) : null}
       </View>
     </SafeAreaView>
   );
@@ -300,12 +282,6 @@ const styles = StyleSheet.create({
   },
   webview: {
     flex: 1,
-    backgroundColor: '#ffffff',
-  },
-  loader: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
     backgroundColor: '#ffffff',
   },
 });
