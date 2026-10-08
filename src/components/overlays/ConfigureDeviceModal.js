@@ -25,8 +25,14 @@ const CAPACITY_OPTIONS = [
   { value: '3.5', label: '3.5 Ton' },
 ];
 
-const Label = ({ children, required = false }) => (
-  <Text className="mb-1.5 text-[10px] font-black uppercase tracking-wider text-slate-400">
+const Label = ({ children, required = false, page = false }) => (
+  <Text
+    className={
+      page
+        ? 'mb-1.5 text-sm font-bold text-slate-800'
+        : 'mb-1.5 text-[10px] font-black uppercase tracking-wider text-slate-400'
+    }
+  >
     {children}
     {required ? <Text className="text-red-500"> *</Text> : null}
   </Text>
@@ -35,6 +41,7 @@ const Label = ({ children, required = false }) => (
 /**
  * "Configure Device" — same fields and API as the web Add Device form
  * (name, organization, venue, brand, capacity → POST /api/device/create).
+ * Pass `asPage` to render inline in the SoftAP wizard (no DialogModal).
  */
 export function ConfigureDeviceModal({
   isOpen,
@@ -43,6 +50,7 @@ export function ConfigureDeviceModal({
   showToast,
   onCancel,
   onCreated,
+  asPage = false,
 }) {
   const { dashboardOrgs: orgs } = useAppContext();
 
@@ -225,6 +233,158 @@ export function ConfigureDeviceModal({
   const venueOptions = venues.map((v) => ({ value: v.id, label: v.name }));
   const brandOptions = brands.map((b) => ({ value: b.id, label: b.name }));
 
+  if (!isOpen && asPage) return null;
+
+  const form = (
+    <View className="gap-4">
+      {asPage ? (
+        <View className="mb-1">
+          <Text className="text-xl font-black tracking-tight text-slate-900">
+            Configure Device
+          </Text>
+          <Text className="mt-1.5 text-sm font-medium leading-5 text-slate-500">
+            Assign this ACKit to the correct organization, venue and AC profile.
+          </Text>
+        </View>
+      ) : null}
+
+      {asPage && toast ? (
+        <View className="-mt-1">
+          <Toast toast={toast} />
+        </View>
+      ) : null}
+
+      <TextField
+        label="Device Name"
+        required
+        icon={Cpu}
+        value={name}
+        onChangeText={setName}
+        placeholder="e.g. SSUET Seminar Hall AC"
+      />
+
+      <View>
+        <Label page={asPage} required>
+          {asPage ? 'Organization' : 'Select Organization'}
+        </Label>
+        <Select
+          value={orgId}
+          onChange={setOrgId}
+          options={orgOptions}
+          placeholder="Select organization"
+          icon={Building2}
+          disabled={orgs.length === 0}
+        />
+      </View>
+
+      <View>
+        <Label page={asPage} required>
+          {asPage ? 'Venue' : 'Select Venue'}
+        </Label>
+        <Select
+          value={venueId}
+          onChange={setVenueId}
+          options={venueOptions}
+          placeholder="No venues available"
+          icon={MapPin}
+          disabled={!orgId}
+        />
+      </View>
+
+      <View>
+        <Label page={asPage}>AC Brand</Label>
+        <Select
+          value={brandId}
+          onChange={setBrandId}
+          options={brandOptions}
+          placeholder={isLoading ? 'Loading…' : 'No brands'}
+          icon={Wind}
+          disabled={isLoading || brands.length === 0}
+        />
+      </View>
+
+      <View>
+        <Label page={asPage}>Capacity</Label>
+        <Select
+          value={capacity}
+          onChange={setCapacity}
+          options={CAPACITY_OPTIONS}
+          icon={Wind}
+        />
+      </View>
+
+      <View className={`mt-1 flex-row gap-3 ${asPage ? '' : ''}`}>
+        {asPage ? (
+          <>
+            <Pressable
+              onPress={handleSubmit}
+              disabled={isSubmitting || isLoading}
+              className={`min-h-[44px] flex-1 flex-row items-center justify-center gap-2 rounded-xl px-4 py-3 active:scale-[0.98] ${
+                isSubmitting || isLoading ? 'bg-blue-300' : 'bg-blue-600'
+              }`}
+            >
+              {isSubmitting ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : null}
+              <Text className="text-sm font-bold text-white">
+                {isConfirming
+                  ? 'Finishing…'
+                  : isSubmitting
+                    ? 'Saving…'
+                    : 'Configure'}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={handleClose}
+              disabled={isSubmitting}
+              className={`min-h-[44px] flex-1 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-3 active:scale-[0.98] ${
+                isSubmitting ? 'opacity-50' : ''
+              }`}
+            >
+              <Text className="text-sm font-bold text-blue-600">Cancel</Text>
+            </Pressable>
+          </>
+        ) : (
+          <>
+            <Pressable
+              onPress={handleClose}
+              disabled={isSubmitting}
+              className={`flex-1 items-center justify-center rounded-full bg-slate-100 py-3.5 active:scale-95 ${
+                isSubmitting ? 'opacity-50' : ''
+              }`}
+            >
+              <Text className="text-xs font-black uppercase tracking-wider text-slate-700">
+                Cancel
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={handleSubmit}
+              disabled={isSubmitting || isLoading}
+              className={`flex-1 flex-row items-center justify-center gap-2 rounded-full py-3.5 shadow-lg active:scale-95 ${
+                isSubmitting || isLoading ? 'bg-blue-300' : 'bg-blue-600'
+              }`}
+            >
+              {isSubmitting ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : null}
+              <Text className="text-xs font-black uppercase tracking-wider text-white">
+                {isConfirming
+                  ? 'Finishing setup…'
+                  : isSubmitting
+                    ? 'Saving…'
+                    : 'Save Device'}
+              </Text>
+            </Pressable>
+          </>
+        )}
+      </View>
+    </View>
+  );
+
+  if (asPage) {
+    return <View className="min-h-0 flex-1">{form}</View>;
+  }
+
   return (
     <DialogModal
       isOpen={isOpen}
@@ -233,93 +393,7 @@ export function ConfigureDeviceModal({
       subtitle="Your AC Kit is online. Add its details to finish setup."
       banner={<Toast toast={toast} />}
     >
-      <View className="gap-4">
-        <TextField
-          label="Device Name"
-          required
-          icon={Cpu}
-          value={name}
-          onChangeText={setName}
-          placeholder="e.g. SSUET Seminar Hall AC"
-        />
-
-        <View>
-          <Label required>Select Organization</Label>
-          <Select
-            value={orgId}
-            onChange={setOrgId}
-            options={orgOptions}
-            placeholder="Select organization"
-            icon={Building2}
-            disabled={orgs.length === 0}
-          />
-        </View>
-
-        <View>
-          <Label required>Select Venue</Label>
-          <Select
-            value={venueId}
-            onChange={setVenueId}
-            options={venueOptions}
-            placeholder="No venues available"
-            icon={MapPin}
-            disabled={!orgId}
-          />
-        </View>
-
-        <View className="flex-row gap-4">
-          <View className="min-w-0 flex-1">
-            <Label>AC Brand</Label>
-            <Select
-              value={brandId}
-              onChange={setBrandId}
-              options={brandOptions}
-              placeholder={isLoading ? 'Loading…' : 'No brands'}
-              icon={Wind}
-              disabled={isLoading || brands.length === 0}
-            />
-          </View>
-          <View className="min-w-0 flex-1">
-            <Label>AC Capacity</Label>
-            <Select
-              value={capacity}
-              onChange={setCapacity}
-              options={CAPACITY_OPTIONS}
-              icon={Wind}
-            />
-          </View>
-        </View>
-
-        <View className="mt-1 flex-row gap-3">
-          <Pressable
-            onPress={handleClose}
-            disabled={isSubmitting}
-            className={`flex-1 items-center justify-center rounded-full bg-slate-100 py-3.5 active:scale-95 ${
-              isSubmitting ? 'opacity-50' : ''
-            }`}
-          >
-            <Text className="text-xs font-black uppercase tracking-wider text-slate-700">
-              Cancel
-            </Text>
-          </Pressable>
-          <Pressable
-            onPress={handleSubmit}
-            disabled={isSubmitting || isLoading}
-            className={`flex-1 flex-row items-center justify-center gap-2 rounded-full py-3.5 shadow-lg active:scale-95 ${
-              isSubmitting || isLoading ? 'bg-blue-300' : 'bg-blue-600'
-            }`}
-          >
-            {isSubmitting ? <ActivityIndicator size="small" color="#ffffff" /> : null}
-            <Text className="text-xs font-black uppercase tracking-wider text-white">
-              {isConfirming
-                ? 'Finishing setup…'
-                : isSubmitting
-                  ? 'Saving…'
-                  : 'Save Device'}
-            </Text>
-          </Pressable>
-        </View>
-      </View>
+      {form}
     </DialogModal>
   );
 }
