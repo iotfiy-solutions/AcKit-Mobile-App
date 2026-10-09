@@ -24,6 +24,7 @@ import {
   updateDevice as updateDeviceRequest,
   deleteDevice as deleteDeviceRequest,
   respondDeviceReset as respondDeviceResetRequest,
+  getPendingDeviceResets,
 } from '../api/deviceApi';
 import { getAppSocket, disconnectBrandSocket } from '../api/brandSocket';
 import { getApiErrorMessage } from '../api/authApi';
@@ -55,7 +56,10 @@ export function AppProvider({ children }) {
   const [users, setUsers] = useState([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState(null);
+  /** Currently open reset approval modal (null when dismissed). */
   const [pendingResetRequest, setPendingResetRequest] = useState(null);
+  /** All open reset requests for this manager (survives modal dismiss). */
+  const [pendingResetRequests, setPendingResetRequests] = useState([]);
 
   const [selectedOrgId, setSelectedOrgId] = useState(null);
   const [selectedVenueId, setSelectedVenueId] = useState(null);
@@ -256,6 +260,115 @@ export function AppProvider({ children }) {
     setUsers((prev) => prev.filter((item) => item.id !== id));
   }, []);
 
+  const upsertPendingResetRequest = useCallback((payload) => {
+    if (!payload?.requestId) return;
+    setPendingResetRequests((prev) => {
+      const next = prev.filter(
+        (r) =>
+          r.requestId !== payload.requestId &&
+          !(
+            payload.deviceMongoId &&
+            r.deviceMongoId &&
+            r.deviceMongoId === String(payload.deviceMongoId)
+          ) &&
+          !(
+            payload.deviceId &&
+            r.deviceId &&
+            String(r.deviceId).toUpperCase() ===
+              String(payload.deviceId).toUpperCase()
+          )
+      );
+      return [
+        ...next,
+        {
+          ...payload,
+          deviceMongoId: payload.deviceMongoId
+            ? String(payload.deviceMongoId)
+            : '',
+          deviceId: payload.deviceId || '',
+          status:
+            payload.status === 'approved' ||
+            payload.status === 'approved_waiting'
+              ? 'approved_waiting'
+              : 'pending',
+        },
+      ];
+    });
+  }, []);
+
+  const removePendingResetRequest = useCallback(
+    ({ requestId, deviceMongoId, deviceId } = {}) => {
+      setPendingResetRequests((prev) =>
+        prev.filter((r) => {
+          if (requestId && r.requestId === requestId) return false;
+          if (
+            deviceMongoId &&
+            r.deviceMongoId &&
+            r.deviceMongoId === String(deviceMongoId)
+          ) {
+            return false;
+          }
+          if (
+            deviceId &&
+            r.deviceId &&
+            String(r.deviceId).toUpperCase() === String(deviceId).toUpperCase()
+          ) {
+            return false;
+          }
+          return true;
+        })
+      );
+    },
+    []
+  );
+
+  const fetchPendingDeviceResets = useCallback(async () => {
+    if (role !== 'manager') {
+      setPendingResetRequests([]);
+      return [];
+    }
+    try {
+      const list = await getPendingDeviceResets();
+      setPendingResetRequests(list);
+      return list;
+    } catch {
+      return [];
+    }
+  }, [role]);
+
+  const deviceHasPendingReset = useCallback(
+    (device) => {
+      if (!device) return false;
+      return pendingResetRequests.some(
+        (r) =>
+          (r.deviceMongoId && r.deviceMongoId === device.id) ||
+          (r.deviceId &&
+            device.deviceId &&
+            String(r.deviceId).toUpperCase() ===
+              String(device.deviceId).toUpperCase())
+      );
+    },
+    [pendingResetRequests]
+  );
+
+  const openPendingResetForDevice = useCallback(
+    (device) => {
+      if (!device) return false;
+      const hit = pendingResetRequests.find(
+        (r) =>
+          (r.deviceMongoId && r.deviceMongoId === device.id) ||
+          (r.deviceId &&
+            device.deviceId &&
+            String(r.deviceId).toUpperCase() ===
+              String(device.deviceId).toUpperCase())
+      );
+      if (!hit) return false;
+      setPendingResetRequest({ ...hit });
+      return true;
+    },
+    [pendingResetRequests]
+  );
+
   const respondToDeviceReset = useCallback(async (approved) => {
     const pending = pendingResetRequest;
     if (!pending?.requestId) {
@@ -270,16 +383,26 @@ export function AppProvider({ children }) {
     }
     if (!approved) {
       setPendingResetRequest(null);
+      removePendingResetRequest({
+        requestId: pending.requestId,
+        deviceMongoId: pending.deviceMongoId,
+        deviceId: pending.deviceId,
+      });
     } else {
       setPendingResetRequest((prev) =>
         prev && prev.requestId === pending.requestId
           ? { ...prev, status: 'approved_waiting' }
           : prev
       );
+      upsertPendingResetRequest({
+        ...pending,
+        status: 'approved_waiting',
+      });
     }
     return data;
-  }, [pendingResetRequest]);
+  }, [pendingResetRequest, removePendingResetRequest, upsertPendingResetRequest]);
 
+  /** Dismiss modal only — keep request in list so Edit stays red / reopenable. */
   const clearPendingResetRequest = useCallback(() => {
     setPendingResetRequest(null);
   }, []);
@@ -291,6 +414,7 @@ export function AppProvider({ children }) {
     setUnits([]);
     setUsers([]);
     setPendingResetRequest(null);
+    setPendingResetRequests([]);
     setSelectedOrgId(null);
     setSelectedVenueId(null);
     setSelectedUnitId(null);
@@ -447,13 +571,23 @@ export function AppProvider({ children }) {
 
     const onDeviceResetRequest = (payload) => {
       if (!payload?.requestId) return;
-      setPendingResetRequest({
+      const next = {
         ...payload,
+        deviceMongoId: payload.deviceMongoId
+          ? String(payload.deviceMongoId)
+          : '',
         status: 'pending',
-      });
+      };
+      upsertPendingResetRequest(next);
+      setPendingResetRequest(next);
     };
 
     const onDeviceResetDenied = (payload) => {
+      removePendingResetRequest({
+        requestId: payload?.requestId,
+        deviceMongoId: payload?.deviceMongoId,
+        deviceId: payload?.deviceId,
+      });
       setPendingResetRequest((prev) => {
         if (!prev) return null;
         if (payload?.requestId && prev.requestId !== payload.requestId) {
@@ -476,6 +610,11 @@ export function AppProvider({ children }) {
         );
         setSelectedUnitId((prev) => (prev && mongoId && prev === mongoId ? null : prev));
       }
+      removePendingResetRequest({
+        requestId: payload?.requestId,
+        deviceMongoId: mongoId,
+        deviceId: shortId,
+      });
       setPendingResetRequest((prev) => {
         if (!prev) return null;
         if (payload?.requestId && prev.requestId !== payload.requestId) {
@@ -511,7 +650,17 @@ export function AppProvider({ children }) {
         socket.off('device:resetComplete', onDeviceResetComplete);
       }
     };
-  }, [token, role]);
+  }, [token, role, upsertPendingResetRequest, removePendingResetRequest]);
+
+  // Hydrate pending reset requests (so red Edit works after app reopen / ignore)
+  useEffect(() => {
+    if (!token || role !== 'manager') {
+      setPendingResetRequests([]);
+      return undefined;
+    }
+    void fetchPendingDeviceResets();
+    return undefined;
+  }, [token, role, fetchPendingDeviceResets]);
 
   // Clear workspace when logged out
   useEffect(() => {
@@ -522,6 +671,7 @@ export function AppProvider({ children }) {
       setUnits([]);
       setUsers([]);
       setPendingResetRequest(null);
+      setPendingResetRequests([]);
       setSelectedOrgId(null);
       setSelectedVenueId(null);
       setSelectedUnitId(null);
@@ -587,8 +737,12 @@ export function AppProvider({ children }) {
       updateSubUser,
       deleteSubUser,
       pendingResetRequest,
+      pendingResetRequests,
       respondToDeviceReset,
       clearPendingResetRequest,
+      fetchPendingDeviceResets,
+      deviceHasPendingReset,
+      openPendingResetForDevice,
       selectedOrgId,
       setSelectedOrgId,
       selectedVenueId,
@@ -627,8 +781,12 @@ export function AppProvider({ children }) {
       updateSubUser,
       deleteSubUser,
       pendingResetRequest,
+      pendingResetRequests,
       respondToDeviceReset,
       clearPendingResetRequest,
+      fetchPendingDeviceResets,
+      deviceHasPendingReset,
+      openPendingResetForDevice,
       selectedOrgId,
       selectedVenueId,
       selectedUnitId,

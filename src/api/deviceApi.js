@@ -26,6 +26,7 @@ export function mapApiDevice(device) {
 
   return {
     id: device._id,
+    deviceId: device.deviceId || '',
     name: device.deviceName,
     venueId,
     organizationId,
@@ -176,6 +177,29 @@ export async function respondDeviceReset(requestId, approved) {
     approved: Boolean(approved),
   });
   return data;
+}
+
+/**
+ * GET /api/device/reset/pending
+ * Manager-only: persisted reset requests (reopen modal / red Edit).
+ */
+export async function getPendingDeviceResets() {
+  const { data } = await api.get('/api/device/reset/pending');
+  return (data.requests || []).map((r) => ({
+    requestId: r.requestId,
+    deviceId: r.deviceId || '',
+    deviceMongoId: r.deviceMongoId ? String(r.deviceMongoId) : '',
+    deviceName: r.deviceName || '',
+    macAddress: r.macAddress || '',
+    managerId: r.managerId ? String(r.managerId) : '',
+    organizationId: r.organizationId ? String(r.organizationId) : '',
+    organizationName: r.organizationName || '',
+    venueName: r.venueName || '',
+    createdAt: r.createdAt,
+    expiresAt: r.expiresAt,
+    status: r.status === 'approved' ? 'approved_waiting' : 'pending',
+    message: r.message || '',
+  }));
 }
 
 export async function setDevicePower(id, state) {

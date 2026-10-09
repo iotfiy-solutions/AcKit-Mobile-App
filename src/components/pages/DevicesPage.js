@@ -32,6 +32,7 @@ import { EditDeviceModal } from '../overlays/DeviceModals';
  */
 export function DevicesPage() {
   const {
+    role,
     dashboardOrgs: orgs,
     dashboardVenues: venues,
     dashboardUnits: units,
@@ -41,6 +42,8 @@ export function DevicesPage() {
     loadDevicesForVenues,
     updateDevice,
     deleteDevice,
+    deviceHasPendingReset,
+    openPendingResetForDevice,
   } = useAppContext();
   const { toast, showToast } = useToast();
 
@@ -281,6 +284,8 @@ export function DevicesPage() {
           ) : (
             filtered.map((device) => {
               const online = device.status === 'online';
+              const resetPending =
+                role === 'manager' && deviceHasPendingReset(device);
               return (
                 <View
                   key={device.id}
@@ -306,15 +311,27 @@ export function DevicesPage() {
                   </Text>
                   <View className="w-[25%] flex-row items-center justify-end gap-1">
                     <Pressable
-                      onPress={() => setEditingDevice(device)}
+                      onPress={() => {
+                        if (resetPending) {
+                          openPendingResetForDevice(device);
+                          return;
+                        }
+                        setEditingDevice(device);
+                      }}
                       hitSlop={6}
-                      className="rounded-lg p-1.5 active:bg-blue-50"
-                      accessibilityLabel="Edit device"
+                      className={`rounded-lg p-1.5 ${
+                        resetPending ? 'active:bg-red-50' : 'active:bg-blue-50'
+                      }`}
+                      accessibilityLabel={
+                        resetPending
+                          ? 'Open factory reset request'
+                          : 'Edit device'
+                      }
                     >
                       <HugeiconsIcon
                         icon={Edit02Icon}
                         size={16}
-                        color="#2563eb"
+                        color={resetPending ? '#dc2626' : '#2563eb'}
                       />
                     </Pressable>
                     <Pressable
