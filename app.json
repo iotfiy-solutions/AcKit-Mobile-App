@@ -48,8 +48,9 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "3be05de7-42d5-49ef-988d-3f475424abeb"
+        "projectId": "77ef4b95-677e-4ccb-b746-9e3db0f6e2d3"
       }
-    }
+    },
+    "owner": "faraz-sial"
   }
 }

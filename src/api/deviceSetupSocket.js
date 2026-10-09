@@ -1,3 +1,4 @@
+import NetInfo from '@react-native-community/netinfo';
 import { getAppSocket } from './brandSocket';
 import { getConfiguredDevicesByManager, getUnconfiguredDevices } from './deviceApi';
 
@@ -13,16 +14,24 @@ import { getConfiguredDevicesByManager, getUnconfiguredDevices } from './deviceA
  *
  * The device is matched by name: SoftAP SSID "Ac-Kit-46EC" ↔ backend name
  * "Ac-Kit-46EC" (both = last 4 hex of the MAC).
+ *
+ * The 2-minute device-online timer starts ONLY after the phone has internet
+ * again (SoftAP leave / home Wi-Fi reconnect time does not burn that budget).
  */
 export const DEVICE_SETUP_EVENT = 'Unconfigured';
 export const DEVICE_WIFI_UPDATED_EVENT = 'device:wifiUpdated';
 export const DEVICE_PROVISIONED_EVENT = 'device:provisioned';
 export const DEVICE_SETUP_WAIT_MS = 120000;
 export const DEVICE_PROVISION_WAIT_MS = 20000;
+/** Max time to wait for the phone itself to regain internet after SoftAP. */
+export const INTERNET_READY_WAIT_MS = 300000;
 const POLL_INTERVAL_MS = 4000;
 
 const TIMEOUT_MESSAGE =
   'Your AC Kit did not come online. Check the Wi-Fi password and try again.';
+
+const INTERNET_TIMEOUT_MESSAGE =
+  'Your phone did not reconnect to the internet in time. Join your home Wi-Fi and try again.';
 
 /**
  * The ESP answered "WiFi updated" (not "Configuration saved"): its flash still
@@ -46,6 +55,75 @@ const macHex = (mac) => String(mac || '').replace(/[^0-9a-f]/gi, '').toUpperCase
 const sameName = (a, b) =>
   String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
 
+/** Phone has a usable path to the backend (not SoftAP-only / offline). */
+function isInternetReady(state) {
+  if (!state?.isConnected) return false;
+  // null = unknown (common briefly on Android) — treat as not ready yet
+  if (state.isInternetReachable === false || state.isInternetReachable == null) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Resolves when NetInfo reports internet, or rejects on cancel / max wait.
+ * @returns {{ promise: Promise<void>, cancel: () => void }}
+ */
+function waitForPhoneInternet({ timeoutMs = INTERNET_READY_WAIT_MS } = {}) {
+  let cancelFn = () => {};
+  const promise = new Promise((resolve, reject) => {
+    let done = false;
+    let unsub = null;
+    let timer = null;
+
+    const finish = (fn) => {
+      if (done) return;
+      done = true;
+      if (timer) clearTimeout(timer);
+      if (typeof unsub === 'function') unsub();
+      fn();
+    };
+
+    cancelFn = () => finish(() => reject(new Error('cancelled')));
+
+    timer = setTimeout(
+      () => finish(() => reject(new Error(INTERNET_TIMEOUT_MESSAGE))),
+      timeoutMs
+    );
+
+    const onReady = () => {
+      setupLog('phone internet ready — starting device online wait timer');
+      finish(() => resolve());
+    };
+
+    NetInfo.fetch()
+      .then((state) => {
+        if (done) return;
+        if (isInternetReady(state)) {
+          onReady();
+          return;
+        }
+        setupLog('waiting for phone internet before starting setup timer…', {
+          isConnected: state?.isConnected,
+          isInternetReachable: state?.isInternetReachable,
+          type: state?.type,
+        });
+        unsub = NetInfo.addEventListener((next) => {
+          if (done || !isInternetReady(next)) return;
+          onReady();
+        });
+      })
+      .catch(() => {
+        // If NetInfo fails, fall through: start wait anyway so setup is not stuck.
+        if (done) return;
+        setupLog('NetInfo.fetch failed — starting setup wait without internet gate');
+        finish(() => resolve());
+      });
+  });
+
+  return { promise, cancel: () => cancelFn() };
+}
+
 /**
  * @param {{ managerId: string, deviceName?: string, timeoutMs?: number }} opts
  * @returns {{ promise: Promise<{status: 'configured'|'unconfigured', device: any}>, cancel: () => void }}
@@ -62,6 +140,7 @@ export function waitForDeviceSetupStatus({
     let socket = null;
     let timer = null;
     let pollTimer = null;
+    let internetWaiter = null;
     let done = false;
 
     const isOurs = (d) =>
@@ -74,6 +153,8 @@ export function waitForDeviceSetupStatus({
       done = true;
       if (timer) clearTimeout(timer);
       if (pollTimer) clearTimeout(pollTimer);
+      internetWaiter?.cancel();
+      internetWaiter = null;
       if (socket) {
         socket.off(DEVICE_SETUP_EVENT, onEvent);
         socket.off(DEVICE_WIFI_UPDATED_EVENT, onWifiUpdated);
@@ -165,32 +246,54 @@ export function waitForDeviceSetupStatus({
       );
     }
 
+    const startDeviceWait = () => {
+      if (done) return;
+
+      timer = setTimeout(
+        () =>
+          finish(() =>
+            reject(
+              new Error(
+                alreadyConfigured ? ALREADY_CONFIGURED_TIMEOUT_MESSAGE : TIMEOUT_MESSAGE
+              )
+            )
+          ),
+        timeoutMs
+      );
+
+      getAppSocket()
+        .then((s) => {
+          if (done) return;
+          socket = s;
+          socket.on(DEVICE_SETUP_EVENT, onEvent);
+          socket.on(DEVICE_WIFI_UPDATED_EVENT, onWifiUpdated);
+        })
+        .catch(() => {
+          // polling still works without the socket
+        });
+
+      pollTimer = setTimeout(poll, 500);
+    };
+
     cancelFn = () => finish(() => reject(new Error('cancelled')));
 
-    timer = setTimeout(
-      () =>
+    internetWaiter = waitForPhoneInternet();
+    internetWaiter.promise
+      .then(() => {
+        internetWaiter = null;
+        startDeviceWait();
+      })
+      .catch((err) => {
+        internetWaiter = null;
+        if (done) return;
         finish(() =>
           reject(
-            new Error(
-              alreadyConfigured ? ALREADY_CONFIGURED_TIMEOUT_MESSAGE : TIMEOUT_MESSAGE
-            )
+            err?.message === 'cancelled'
+              ? err
+              : new Error(err?.message || INTERNET_TIMEOUT_MESSAGE)
           )
-        ),
-      timeoutMs
-    );
-
-    getAppSocket()
-      .then((s) => {
-        if (done) return;
-        socket = s;
-        socket.on(DEVICE_SETUP_EVENT, onEvent);
-        socket.on(DEVICE_WIFI_UPDATED_EVENT, onWifiUpdated);
-      })
-      .catch(() => {
-        // polling still works without the socket
+        );
       });
-
-    pollTimer = setTimeout(poll, 1500);
   });
 
   return { promise, cancel: () => cancelFn() };
