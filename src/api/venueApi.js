@@ -34,6 +34,22 @@ export async function getVenuesByOrganization(organizationId) {
   }
 }
 
+/**
+ * Returns venues assigned to the current user (optionally filtered by organization).
+ * For manager: returns all venues under manager's organizations.
+ * For user: returns only venues assigned to this user in user.venues.
+ */
+export async function getUserAssignedVenues(organizationId) {
+  try {
+    const params = organizationId ? { organizationId } : {};
+    const { data } = await api.get('/api/venue/my-venues', { params });
+    return (data.venues || []).map(mapApiVenue);
+  } catch (err) {
+    if (isEmptyNotFound(err)) return [];
+    throw err;
+  }
+}
+
 export async function getMyVenues(organizationIds) {
   if (!organizationIds?.length) return [];
   const batches = await Promise.all(

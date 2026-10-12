@@ -10,7 +10,7 @@ import {
   getDeviceBrandOptions,
 } from '../../api/deviceApi';
 import { waitForDeviceProvisioned } from '../../api/deviceSetupSocket';
-import { getVenuesByOrganization } from '../../api/venueApi';
+import { getVenuesByOrganization, getUserAssignedVenues } from '../../api/venueApi';
 import { DialogModal } from '../ui/DialogModal';
 import { Select } from '../ui/Select';
 import { TextField } from '../ui/TextField';
@@ -52,7 +52,7 @@ export function ConfigureDeviceModal({
   onCreated,
   asPage = false,
 }) {
-  const { dashboardOrgs: orgs } = useAppContext();
+  const { role, dashboardOrgs: orgs } = useAppContext();
 
   const [name, setName] = useState('');
   const [orgId, setOrgId] = useState('');
@@ -107,7 +107,13 @@ export function ConfigureDeviceModal({
     setVenueId('');
     setVenues([]);
     if (!orgId) return undefined;
-    getVenuesByOrganization(orgId)
+
+    const fetchVenues =
+      role === 'user'
+        ? getUserAssignedVenues(orgId)
+        : getVenuesByOrganization(orgId);
+
+    fetchVenues
       .then((list) => {
         if (!active) return;
         setVenues(list);
@@ -117,7 +123,7 @@ export function ConfigureDeviceModal({
     return () => {
       active = false;
     };
-  }, [isOpen, orgId, showToast]);
+  }, [isOpen, orgId, role, showToast]);
 
   const handleSubmit = async () => {
     if (isSubmitting) return;
