@@ -10,7 +10,7 @@ import { HugeiconsIcon } from '@hugeicons/react-native';
 import { Building2 } from '@hugeicons/core-free-icons';
 import { useAppContext } from '../../context/AppContext';
 import { useConsole } from '../../context/ConsoleContext';
-import { setDevicePower, setDeviceTemperature, setDeviceRemote } from '../../api/deviceApi';
+import { setDevicePower, setDeviceTemperature, setDeviceMode, setDeviceFan, setDeviceRemote } from '../../api/deviceApi';
 import {
   createScheduleEvent,
   listScheduleEvents,
@@ -47,6 +47,7 @@ import { ScheduleModal } from './ScheduleModal';
  */
 export function Dashboard() {
   const {
+    role,
     dashboardOrgs: orgs,
     dashboardVenues: venues,
     dashboardUnits: liveUnits,
@@ -62,6 +63,8 @@ export function Dashboard() {
     setActiveTab,
   } = useAppContext();
   const { openOrgOverlay } = useConsole();
+
+  const isManager = role === 'manager' || role === 'admin';
 
   const selectedVenueId = globalVenueId || 'all';
 
@@ -163,9 +166,38 @@ export function Dashboard() {
   const targetTempState = resolveDisplayTemp(selectedUnits, frameTempScopeKey);
   const lockState = resolveLockState(selectedUnits);
 
+  // Resolved mode / fan for the current scope (mirrors web)
+  const currentMode = useMemo(() => {
+    if (selectedUnits.length === 0) return 'Cool';
+    const first = selectedUnits[0].mode;
+    return selectedUnits.every((u) => u.mode === first) ? (first || 'Cool') : 'Mixed';
+  }, [selectedUnits]);
+
+  const currentFan = useMemo(() => {
+    if (selectedUnits.length === 0) return 'Medium';
+    const first = selectedUnits[0].fanSpeed;
+    return selectedUnits.every((u) => u.fanSpeed === first) ? (first || 'Medium') : 'Mixed';
+  }, [selectedUnits]);
+
   // Org/venue: skip superlock. Single device: allow direct control.
   const skipSuperlockForFrame = !globalUnitId;
   const ignoreAllForFrame = !globalUnitId;
+
+  // Single device permissions & locked status (mirrors web ACDetail)
+  const singleUnit = globalUnitId ? selectedUnits[0] : null;
+  const isSingleOnline = singleUnit ? isDeviceOnline(singleUnit) : true;
+  const controlsBlockedReason = singleUnit
+    ? !isSingleOnline
+      ? 'Device is offline'
+      : singleUnit.isLocked && !isManager
+        ? 'Device is locked.'
+        : ''
+    : '';
+  const controlsDisabled = Boolean(controlsBlockedReason);
+  const lockDisabled = Boolean(
+    !isManager && (singleUnit?.eventLocked || (globalUnitId && singleUnit?.isLocked))
+  );
+
   const framePowerTargets = filterPowerTempTargets(
     selectedUnits,
     skipSuperlockForFrame
@@ -207,24 +239,68 @@ export function Dashboard() {
     };
   }, [globalOrgId, selectedVenueId]);
 
-  // Remove one-time / deleted events live
+  // Live schedule sync (create / delete / enable) across admin + manager + user
+  // — mirrors web Dashboard.tsx useEffect for event:deleted / event:created / event:updated
   useEffect(() => {
     let cancelled = false;
     let socket = null;
+
     const onEventDeleted = (payload) => {
       if (!payload?.id) return;
-      setScopeEvents((prev) => prev.filter((e) => e.id !== payload.id));
+      setScopeEvents((prev) => prev.filter((e) => String(e.id) !== String(payload.id)));
     };
+
+    const onEventCreated = (payload) => {
+      if (!payload?.id || !globalOrgId) return;
+      if (String(payload.organizationId) !== String(globalOrgId)) return;
+
+      const wantOrg = selectedVenueId === 'all';
+      if (wantOrg) {
+        if (payload.scope !== 'organization') return;
+      } else {
+        if (payload.scope !== 'venue') return;
+        if (String(payload.venueId || '') !== String(selectedVenueId)) return;
+      }
+
+      const mapped = scheduleEventToACEvent(payload);
+      setScopeEvents((prev) => {
+        if (prev.some((e) => String(e.id) === String(mapped.id))) {
+          return prev.map((e) =>
+            String(e.id) === String(mapped.id) ? { ...e, ...mapped } : e
+          );
+        }
+        return [mapped, ...prev];
+      });
+    };
+
+    const onEventUpdated = (payload) => {
+      if (!payload?.id) return;
+      const mapped = scheduleEventToACEvent(payload);
+      setScopeEvents((prev) => {
+        const idx = prev.findIndex((e) => String(e.id) === String(mapped.id));
+        if (idx < 0) return prev;
+        const next = [...prev];
+        next[idx] = { ...next[idx], ...mapped };
+        return next;
+      });
+    };
+
     (async () => {
       socket = await getAppSocket();
       if (cancelled) return;
       socket.on('event:deleted', onEventDeleted);
+      socket.on('event:created', onEventCreated);
+      socket.on('event:updated', onEventUpdated);
     })();
     return () => {
       cancelled = true;
-      if (socket) socket.off('event:deleted', onEventDeleted);
+      if (socket) {
+        socket.off('event:deleted', onEventDeleted);
+        socket.off('event:created', onEventCreated);
+        socket.off('event:updated', onEventUpdated);
+      }
     };
-  }, []);
+  }, [globalOrgId, selectedVenueId]);
 
   const handleOrgChange = useCallback(
     (orgId) => {
@@ -466,6 +542,10 @@ export function Dashboard() {
 
   const handleBulkPowerToggle = (forceState) => {
     if (bulkPowerPending) return;
+    if (controlsBlockedReason) {
+      showBulkToast(controlsBlockedReason, 'error');
+      return;
+    }
     const targets = filterPowerTempTargets(
       selectedUnits,
       skipSuperlockForFrame
@@ -480,7 +560,11 @@ export function Dashboard() {
     );
   };
 
-  const handleBulkTempAdjust = (increment) =>
+  const handleBulkTempAdjust = (increment) => {
+    if (controlsBlockedReason) {
+      showBulkToast(controlsBlockedReason, 'error');
+      return;
+    }
     handleScopeTempAdjust(
       frameTempScopeKey,
       selectedUnits,
@@ -488,8 +572,13 @@ export function Dashboard() {
       skipSuperlockForFrame,
       ignoreAllForFrame
     );
+  };
 
-  const handleBulkTempSet = (temp) =>
+  const handleBulkTempSet = (temp) => {
+    if (controlsBlockedReason) {
+      showBulkToast(controlsBlockedReason, 'error');
+      return;
+    }
     handleScopeTempSet(
       frameTempScopeKey,
       selectedUnits,
@@ -497,20 +586,157 @@ export function Dashboard() {
       skipSuperlockForFrame,
       ignoreAllForFrame
     );
+  };
 
-  const handleBulkEco = () =>
+  const handleBulkEco = () => {
+    if (controlsBlockedReason) {
+      showBulkToast(controlsBlockedReason, 'error');
+      return;
+    }
     handleScopeEco(
       frameTempScopeKey,
       selectedUnits,
       skipSuperlockForFrame,
       ignoreAllForFrame
     );
+  };
+
+  // ---- mode & fan speed (ported 1:1 from web) ----
+  const handleBulkModeChange = useCallback(
+    (modeLabel) => {
+      if (controlsBlockedReason) {
+        showBulkToast(controlsBlockedReason, 'error');
+        return;
+      }
+      const mode = modeLabel.toLowerCase();
+      const targets = filterPowerTempTargets(selectedUnits, skipSuperlockForFrame);
+      if (targets.length === 0) {
+        showBulkToast(
+          offlineBulkToastMessage(selectedUnits, skipSuperlockForFrame, 'mode'),
+          'error'
+        );
+        return;
+      }
+
+      void (async () => {
+        try {
+          await withEventOverrideGuard({
+            deviceIds: targets.map((u) => u.id),
+            ignoreAllTargets: ignoreAllForFrame,
+            onNeedConfirm: (pending) => setEventOverridePending(pending),
+            apply: async () => {
+              const results = await Promise.allSettled(
+                targets.map(async (u) => {
+                  const result = await setDeviceMode(u.id, mode);
+                  if (result.applied) {
+                    updateUnit(u.id, { mode: modeLabel });
+                  }
+                  return result;
+                })
+              );
+
+              const applied = results.filter(
+                (r) => r.status === 'fulfilled' && r.value.applied
+              ).length;
+              const skipped = results.filter(
+                (r) => r.status === 'fulfilled' && r.value.skipped
+              ).length;
+              const failed = results.filter((r) => r.status === 'rejected').length;
+
+              if (applied === 0 && skipped > 0 && failed === 0) {
+                showBulkToast('No devices have this mode IR command', 'info');
+              } else if (skipped > 0 || failed > 0) {
+                showBulkToast(
+                  `Mode set on ${applied}/${targets.length} devices` +
+                    (skipped ? ` · ${skipped} skipped (no IR)` : '') +
+                    (failed ? ` · ${failed} failed` : ''),
+                  failed === targets.length ? 'error' : 'info'
+                );
+              }
+            },
+          });
+        } catch {
+          showBulkToast('Failed to set mode', 'error');
+        }
+      })();
+    },
+    [selectedUnits, skipSuperlockForFrame, ignoreAllForFrame, showBulkToast, updateUnit]
+  );
+
+  const handleBulkFanSpeedChange = useCallback(
+    (fanLabel) => {
+      if (controlsBlockedReason) {
+        showBulkToast(controlsBlockedReason, 'error');
+        return;
+      }
+      const fan = fanLabel.toLowerCase();
+      const targets = filterPowerTempTargets(selectedUnits, skipSuperlockForFrame);
+      if (targets.length === 0) {
+        showBulkToast(
+          offlineBulkToastMessage(selectedUnits, skipSuperlockForFrame, 'fan'),
+          'error'
+        );
+        return;
+      }
+
+      void (async () => {
+        try {
+          await withEventOverrideGuard({
+            deviceIds: targets.map((u) => u.id),
+            ignoreAllTargets: ignoreAllForFrame,
+            onNeedConfirm: (pending) => setEventOverridePending(pending),
+            apply: async () => {
+              const results = await Promise.allSettled(
+                targets.map(async (u) => {
+                  const result = await setDeviceFan(u.id, fan);
+                  if (result.applied) {
+                    updateUnit(u.id, { fanSpeed: fanLabel });
+                  }
+                  return result;
+                })
+              );
+
+              const applied = results.filter(
+                (r) => r.status === 'fulfilled' && r.value.applied
+              ).length;
+              const skipped = results.filter(
+                (r) => r.status === 'fulfilled' && r.value.skipped
+              ).length;
+              const failed = results.filter((r) => r.status === 'rejected').length;
+
+              if (applied === 0 && skipped > 0 && failed === 0) {
+                showBulkToast('No devices have this fan IR command', 'info');
+              } else if (skipped > 0 || failed > 0) {
+                showBulkToast(
+                  `Fan set on ${applied}/${targets.length} devices` +
+                    (skipped ? ` · ${skipped} skipped (no IR)` : '') +
+                    (failed ? ` · ${failed} failed` : ''),
+                  failed === targets.length ? 'error' : 'info'
+                );
+              }
+            },
+          });
+        } catch {
+          showBulkToast('Failed to set fan speed', 'error');
+        }
+      })();
+    },
+    [controlsBlockedReason, selectedUnits, skipSuperlockForFrame, ignoreAllForFrame, showBulkToast, updateUnit]
+  );
 
   // Lock: same API as web Devices/ACDetail (PUT /api/device/remote/:id).
   // Web dashboard desktop card is local-only — mobile hits the real endpoint.
   const handleBulkLockChange = useCallback(
     async (status) => {
       if (bulkLockPending) return;
+      if (!isManager && selectedUnits.some((u) => u.eventLocked)) {
+        showBulkToast('Only managers can change Super Locked devices', 'error');
+        return;
+      }
+      if (!isManager && singleUnit?.isLocked) {
+        showBulkToast('Device is locked.', 'error');
+        return;
+      }
       const targets = selectedUnits.filter(isDeviceOnline);
       if (targets.length === 0) {
         showBulkToast(
@@ -634,7 +860,15 @@ export function Dashboard() {
 
       const newEvent = scheduleEventToACEvent(saved);
       if (scope === 'organization' || scope === 'venue') {
-        setScopeEvents((prev) => [newEvent, ...prev]);
+        // Upsert: socket `event:created` may arrive before this local update
+        setScopeEvents((prev) => {
+          if (prev.some((e) => String(e.id) === String(newEvent.id))) {
+            return prev.map((e) =>
+              String(e.id) === String(newEvent.id) ? { ...e, ...newEvent } : e
+            );
+          }
+          return [newEvent, ...prev];
+        });
       }
       showBulkToast('Event scheduled', 'info');
       setShowScheduleForm(false);
@@ -643,6 +877,7 @@ export function Dashboard() {
         error?.response?.data?.message || 'Failed to create event',
         'error'
       );
+      throw error;
     }
   };
 
@@ -784,6 +1019,7 @@ export function Dashboard() {
             faultUnitsCount={faultUnitsCount}
             lockState={lockState}
             lockPending={bulkLockPending}
+            lockDisabled={lockDisabled}
             onOpenReports={() => setActiveTab('reports')}
             onOpenDevices={handleOpenDevices}
             onOpenMaintenance={openMaintenanceDrawer}
@@ -794,13 +1030,19 @@ export function Dashboard() {
             targetTempState={targetTempState}
             allUnitsOn={allUnitsOn}
             powerPending={bulkPowerPending}
+            currentMode={currentMode}
+            currentFan={currentFan}
+            controlsBlockedReason={controlsBlockedReason}
+            controlsDisabled={controlsDisabled}
             onAdjust={(inc) => {
-              if (!allUnitsOn) return;
+              if (!allUnitsOn || controlsDisabled) return;
               handleBulkTempAdjust(inc);
             }}
             onSetTemp={handleBulkTempSet}
             onEco={handleBulkEco}
             onPower={handleBulkPowerToggle}
+            onModeChange={handleBulkModeChange}
+            onFanChange={handleBulkFanSpeedChange}
           />
 
           <EventsSection

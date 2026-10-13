@@ -195,6 +195,8 @@ export function MaintenanceDrawer({
     [translateY]
   );
 
+  if (!visible) return null;
+
   return (
     <Modal
       visible={visible}

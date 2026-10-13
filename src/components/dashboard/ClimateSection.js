@@ -1,5 +1,14 @@
 import React, { useRef, useState } from 'react';
-import { ActivityIndicator, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Modal,
+  PanResponder,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+} from 'react-native';
 import Svg, {
   Circle,
   Defs,
@@ -13,13 +22,39 @@ import Svg, {
 } from 'react-native-svg';
 import { HugeiconsIcon } from '@hugeicons/react-native';
 import {
+  AlertCircle,
+  Check,
+  ChevronDown,
+  Droplet,
+  Fan,
   Minus,
   Plus,
   Power,
   SlidersHorizontal,
   Snowflake,
+  Sparkles,
+  Sun,
+  Wind,
 } from '@hugeicons/core-free-icons';
 import { TEMP_ECO, TEMP_MAX, TEMP_MIN } from '../../utils/dashboardHelpers';
+
+const MODE_OPTIONS = [
+  { mode: 'Cool', label: 'Cool', icon: Snowflake },
+  { mode: 'Heat', label: 'Heat', icon: Sun },
+  { mode: 'Dry', label: 'Dry', icon: Droplet },
+  { mode: 'Fan', label: 'Fan Only', icon: Wind },
+  { mode: 'Auto', label: 'Auto', icon: Sparkles },
+];
+
+const FAN_OPTIONS = ['Low', 'Medium', 'High', 'Ultra', 'Turbo'];
+
+const MODE_ICONS = {
+  Cool: Snowflake,
+  Heat: Sun,
+  Dry: Droplet,
+  Fan: Wind,
+  Auto: Sparkles,
+};
 
 const ARC_PATH = 'M 39.5 169.1 A 92 92 0 1 1 180.5 169.1';
 const ARC_LENGTH = 417.5;
@@ -62,10 +97,16 @@ export function ClimateSection({
   targetTempState,
   allUnitsOn,
   powerPending = false,
+  currentMode = 'Cool',
+  currentFan = 'Medium',
+  controlsBlockedReason = '',
+  controlsDisabled = false,
   onAdjust,
   onSetTemp,
   onEco,
   onPower,
+  onModeChange,
+  onFanChange,
 }) {
   const tempValue =
     typeof targetTempState === 'number' ? targetTempState : TEMP_ECO;
@@ -76,8 +117,51 @@ export function ClimateSection({
   const cy = 110 + 92 * Math.sin(angleRad);
   const handleArrow = allUnitsOn ? '#2563eb' : '#94a3b8';
 
+  const { width: winW, height: winH } = useWindowDimensions();
   const [dialSize, setDialSize] = useState(240);
   const [cardSize, setCardSize] = useState({ w: 0, h: 0 });
+  const [showModeDropdown, setShowModeDropdown] = useState(false);
+  const [showFanDropdown, setShowFanDropdown] = useState(false);
+  const [modeRect, setModeRect] = useState(null);
+  const [fanRect, setFanRect] = useState(null);
+  const modeTriggerRef = useRef(null);
+  const fanTriggerRef = useRef(null);
+
+  const openModeDropdown = () => {
+    if (!allUnitsOn || controlsDisabled) return;
+    modeTriggerRef.current?.measureInWindow((x, y, width, h) => {
+      const estimatedMax = 220;
+      const spaceBelow = winH - (y + h);
+      const openUp = spaceBelow < estimatedMax && y > spaceBelow;
+      const left = Math.max(12, Math.min(x, winW - width - 12));
+      setModeRect({
+        left,
+        width,
+        top: openUp ? undefined : y + h + 6,
+        bottom: openUp ? winH - y + 6 : undefined,
+      });
+      setShowModeDropdown(true);
+      setShowFanDropdown(false);
+    });
+  };
+
+  const openFanDropdown = () => {
+    if (!allUnitsOn || controlsDisabled) return;
+    fanTriggerRef.current?.measureInWindow((x, y, width, h) => {
+      const estimatedMax = 220;
+      const spaceBelow = winH - (y + h);
+      const openUp = spaceBelow < estimatedMax && y > spaceBelow;
+      const left = Math.max(12, Math.min(x, winW - width - 12));
+      setFanRect({
+        left,
+        width,
+        top: openUp ? undefined : y + h + 6,
+        bottom: openUp ? winH - y + 6 : undefined,
+      });
+      setShowFanDropdown(true);
+      setShowModeDropdown(false);
+    });
+  };
   const live = useRef({});
   live.current = { allUnitsOn, onSetTemp, dialSize };
 
@@ -196,6 +280,18 @@ export function ClimateSection({
         </Svg>
       ) : null}
 
+      {/* Blocked reason banner (e.g., "Device is locked." or "Device is offline") */}
+      {controlsBlockedReason ? (
+        <View className="z-[3] w-full px-2 mb-1">
+          <View className="flex-row items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50/95 px-3.5 py-2.5 shadow-sm">
+            <HugeiconsIcon icon={AlertCircle} size={16} color="#d97706" strokeWidth={2} />
+            <Text className="flex-1 text-xs font-bold text-amber-800">
+              {controlsBlockedReason}
+            </Text>
+          </View>
+        </View>
+      ) : null}
+
       {/* Dial */}
       <View
         className="z-[1] w-full"
@@ -273,6 +369,7 @@ export function ClimateSection({
         {/* Touch layer for dragging along the arc */}
         <View
           style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+          pointerEvents={controlsDisabled ? 'none' : 'auto'}
           {...pan.current.panHandlers}
         />
 
@@ -287,22 +384,22 @@ export function ClimateSection({
             className="mb-0.5 flex-row items-center gap-1"
           >
             <HugeiconsIcon
-              icon={Snowflake}
+              icon={MODE_ICONS[currentMode] || Snowflake}
               size={14}
               color="#2563eb"
               strokeWidth={2.25}
             />
             <Text className="text-[10px] font-bold uppercase tracking-[0.22em] text-[#60a5fa]">
-              Cool
+              {currentMode || 'Cool'}
             </Text>
           </View>
 
           <View className="my-0.5 flex-row items-center justify-center gap-2.5">
             <Pressable
-              disabled={!allUnitsOn}
+              disabled={!allUnitsOn || controlsDisabled}
               onPress={() => onAdjust(-1)}
               className={`h-9 w-9 items-center justify-center rounded-full bg-white active:scale-90 ${
-                allUnitsOn ? '' : 'opacity-40'
+                allUnitsOn && !controlsDisabled ? '' : 'opacity-40'
               }`}
               style={buttonShadow}
             >
@@ -331,10 +428,10 @@ export function ClimateSection({
             </View>
 
             <Pressable
-              disabled={!allUnitsOn}
+              disabled={!allUnitsOn || controlsDisabled}
               onPress={() => onAdjust(1)}
               className={`h-9 w-9 items-center justify-center rounded-full bg-white active:scale-90 ${
-                allUnitsOn ? '' : 'opacity-40'
+                allUnitsOn && !controlsDisabled ? '' : 'opacity-40'
               }`}
               style={buttonShadow}
             >
@@ -348,8 +445,11 @@ export function ClimateSection({
           </View>
 
           <Pressable
+            disabled={controlsDisabled}
             onPress={onEco}
-            className="mt-2.5 flex-row items-center gap-1.5 rounded-full bg-[#e8eefc] px-3.5 py-1.5 active:bg-blue-100"
+            className={`mt-2.5 flex-row items-center gap-1.5 rounded-full bg-[#e8eefc] px-3.5 py-1.5 active:bg-blue-100 ${
+              controlsDisabled ? 'opacity-40' : ''
+            }`}
           >
             <HugeiconsIcon
               icon={SlidersHorizontal}
@@ -364,14 +464,93 @@ export function ClimateSection({
         </View>
       </View>
 
+      {/* Mode & Fan selectors — mirrors web Active Control Frame */}
+      <View className="z-[2] w-full flex-row gap-2 px-8" style={{ alignSelf: 'center' }}>
+        {/* MODE SELECTOR */}
+        <View className="flex-1">
+          <Text
+            className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1"
+          >
+            Mode
+          </Text>
+          <Pressable
+            ref={modeTriggerRef}
+            collapsable={false}
+            disabled={!allUnitsOn || controlsDisabled}
+            onPress={openModeDropdown}
+            className={`flex-row items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-2.5 py-2.5 ${
+              allUnitsOn && !controlsDisabled ? 'active:bg-slate-100' : 'opacity-50'
+            }`}
+          >
+            <View className="flex-row items-center gap-1.5 min-w-0 flex-1">
+              <HugeiconsIcon
+                icon={MODE_ICONS[currentMode] || Snowflake}
+                size={14}
+                color="#2563eb"
+                strokeWidth={2}
+              />
+              <Text className="text-[10px] font-black uppercase tracking-wider text-slate-800" numberOfLines={1}>
+                {currentMode || 'Cool'}
+              </Text>
+            </View>
+            <View style={{ transform: [{ rotate: showModeDropdown ? '180deg' : '0deg' }] }}>
+              <HugeiconsIcon
+                icon={ChevronDown}
+                size={12}
+                color={showModeDropdown ? '#2563eb' : '#94a3b8'}
+                strokeWidth={2}
+              />
+            </View>
+          </Pressable>
+        </View>
+
+        {/* FAN SPEED SELECTOR */}
+        <View className="flex-1">
+          <Text
+            className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-1"
+          >
+            Fan Speed
+          </Text>
+          <Pressable
+            ref={fanTriggerRef}
+            collapsable={false}
+            disabled={!allUnitsOn || controlsDisabled}
+            onPress={openFanDropdown}
+            className={`flex-row items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-2.5 py-2.5 ${
+              allUnitsOn && !controlsDisabled ? 'active:bg-slate-100' : 'opacity-50'
+            }`}
+          >
+            <View className="flex-row items-center gap-1.5 min-w-0 flex-1">
+              <HugeiconsIcon
+                icon={Fan}
+                size={14}
+                color="#2563eb"
+                strokeWidth={2}
+              />
+              <Text className="text-[10px] font-black uppercase tracking-wider text-slate-800" numberOfLines={1}>
+                {currentFan || 'Medium'}
+              </Text>
+            </View>
+            <View style={{ transform: [{ rotate: showFanDropdown ? '180deg' : '0deg' }] }}>
+              <HugeiconsIcon
+                icon={ChevronDown}
+                size={12}
+                color={showFanDropdown ? '#2563eb' : '#94a3b8'}
+                strokeWidth={2}
+              />
+            </View>
+          </Pressable>
+        </View>
+      </View>
+
       {/* ON / OFF segmented switch */}
       <View className="z-[1] w-full items-center">
         <View
           className={`h-12 w-full flex-row items-center rounded-full bg-slate-100 p-1 ${
-            powerPending ? 'opacity-60' : ''
+            powerPending || controlsDisabled ? 'opacity-60' : ''
           }`}
           style={{ maxWidth: 240 }}
-          pointerEvents={powerPending ? 'none' : 'auto'}
+          pointerEvents={powerPending || controlsDisabled ? 'none' : 'auto'}
         >
           {[
             { label: 'ON', value: true, active: allUnitsOn },
@@ -379,11 +558,11 @@ export function ClimateSection({
           ].map((btn) => (
             <Pressable
               key={btn.label}
-              disabled={powerPending}
+              disabled={powerPending || controlsDisabled}
               onPress={() => onPower(btn.value)}
               className={`h-full flex-1 flex-row items-center justify-center gap-1.5 rounded-full ${
                 btn.active ? 'bg-[#2563eb]' : ''
-              }`}
+              } ${controlsDisabled ? 'opacity-50' : ''}`}
               style={
                 btn.active
                   ? {
@@ -417,6 +596,134 @@ export function ClimateSection({
           ))}
         </View>
       </View>
+
+      {/* MODE DROPDOWN MODAL */}
+      <Modal
+        visible={showModeDropdown && !!modeRect}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setShowModeDropdown(false)}
+      >
+        <Pressable className="flex-1" onPress={() => setShowModeDropdown(false)}>
+          {modeRect ? (
+            <Pressable
+              onPress={() => {}}
+              className="absolute rounded-2xl border border-slate-100 bg-white p-1.5 shadow-2xl"
+              style={{
+                left: modeRect.left,
+                width: Math.max(modeRect.width, 140),
+                top: modeRect.top,
+                bottom: modeRect.bottom,
+                elevation: 24,
+                shadowColor: '#0f172a',
+                shadowOpacity: 0.18,
+                shadowRadius: 16,
+                shadowOffset: { width: 0, height: 6 },
+              }}
+            >
+              {MODE_OPTIONS.map((m) => {
+                const isActive = currentMode === m.mode;
+                return (
+                  <Pressable
+                    key={m.mode}
+                    onPress={() => {
+                      if (onModeChange) onModeChange(m.mode);
+                      setShowModeDropdown(false);
+                    }}
+                    className={`flex-row items-center justify-between rounded-xl px-2.5 py-2 mb-0.5 ${
+                      isActive ? 'bg-blue-600' : 'active:bg-slate-50'
+                    }`}
+                  >
+                    <View className="flex-row items-center gap-1.5">
+                      <HugeiconsIcon
+                        icon={m.icon}
+                        size={14}
+                        color={isActive ? '#ffffff' : '#64748b'}
+                        strokeWidth={2}
+                      />
+                      <Text
+                        className={`text-[10px] font-black uppercase tracking-wider ${
+                          isActive ? 'text-white' : 'text-slate-700'
+                        }`}
+                      >
+                        {m.label}
+                      </Text>
+                    </View>
+                    {isActive && (
+                      <HugeiconsIcon icon={Check} size={12} color="#ffffff" strokeWidth={2.5} />
+                    )}
+                  </Pressable>
+                );
+              })}
+            </Pressable>
+          ) : null}
+        </Pressable>
+      </Modal>
+
+      {/* FAN DROPDOWN MODAL */}
+      <Modal
+        visible={showFanDropdown && !!fanRect}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setShowFanDropdown(false)}
+      >
+        <Pressable className="flex-1" onPress={() => setShowFanDropdown(false)}>
+          {fanRect ? (
+            <Pressable
+              onPress={() => {}}
+              className="absolute rounded-2xl border border-slate-100 bg-white p-1.5 shadow-2xl"
+              style={{
+                left: fanRect.left,
+                width: Math.max(fanRect.width, 140),
+                top: fanRect.top,
+                bottom: fanRect.bottom,
+                elevation: 24,
+                shadowColor: '#0f172a',
+                shadowOpacity: 0.18,
+                shadowRadius: 16,
+                shadowOffset: { width: 0, height: 6 },
+              }}
+            >
+              {FAN_OPTIONS.map((speed) => {
+                const isActive = currentFan === speed;
+                return (
+                  <Pressable
+                    key={speed}
+                    onPress={() => {
+                      if (onFanChange) onFanChange(speed);
+                      setShowFanDropdown(false);
+                    }}
+                    className={`flex-row items-center justify-between rounded-xl px-2.5 py-2 mb-0.5 ${
+                      isActive ? 'bg-blue-600' : 'active:bg-slate-50'
+                    }`}
+                  >
+                    <View className="flex-row items-center gap-1.5">
+                      <HugeiconsIcon
+                        icon={Fan}
+                        size={14}
+                        color={isActive ? '#ffffff' : '#64748b'}
+                        strokeWidth={2}
+                      />
+                      <Text
+                        className={`text-[10px] font-black uppercase tracking-wider ${
+                          isActive ? 'text-white' : 'text-slate-700'
+                        }`}
+                      >
+                        {speed}
+                      </Text>
+                    </View>
+                    {isActive && (
+                      <HugeiconsIcon icon={Check} size={12} color="#ffffff" strokeWidth={2.5} />
+                    )}
+                  </Pressable>
+                );
+              })}
+            </Pressable>
+          ) : null}
+        </Pressable>
+      </Modal>
     </View>
   );
 }

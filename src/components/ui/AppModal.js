@@ -14,6 +14,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 /**
  * Mirrors web Modal (components/ui/Modal.tsx) — mobile = bottom sheet:
  * rounded-t-[1.75rem], drag hint, title/subtitle header + X, scrollable body.
+ *
+ * NOTE: We render nothing when `isOpen` is false. RN's `<Modal>` creates a
+ * separate native view hierarchy that breaks React Navigation context
+ * propagation. By not mounting children when closed, we avoid the
+ * "Couldn't find a navigation context" crash entirely.
  */
 export function AppModal({
   isOpen,
@@ -25,9 +30,11 @@ export function AppModal({
 }) {
   const insets = useSafeAreaInsets();
 
+  if (!isOpen) return null;
+
   return (
     <Modal
-      visible={Boolean(isOpen)}
+      visible
       transparent
       animationType="slide"
       onRequestClose={onClose}
@@ -91,3 +98,4 @@ export function AppModal({
     </Modal>
   );
 }
+

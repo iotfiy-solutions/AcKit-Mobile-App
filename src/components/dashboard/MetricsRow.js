@@ -240,11 +240,11 @@ const LOCK_OPTIONS = [
 ];
 
 /** Card 3 — Lock State (Super | Lock | Unlock strip) */
-function LockCard({ lockState, onPick, pending }) {
+function LockCard({ lockState, onPick, pending, lockDisabled = false }) {
   return (
     <View
       className={`flex-1 gap-2 overflow-hidden rounded-2xl bg-[#2563eb] px-2 pb-1.5 pt-2 ${
-        pending ? 'opacity-70' : ''
+        pending || lockDisabled ? 'opacity-70' : ''
       }`}
       style={{
         shadowColor: '#2563eb',
@@ -253,7 +253,7 @@ function LockCard({ lockState, onPick, pending }) {
         shadowOffset: { width: 0, height: 3 },
         elevation: 4,
       }}
-      pointerEvents={pending ? 'none' : 'auto'}
+      pointerEvents={pending || lockDisabled ? 'none' : 'auto'}
     >
       <View className="min-w-0 flex-row items-center gap-1">
         <HugeiconsIcon icon={Lock} size={12} color="#ffffff" strokeWidth={2.25} />
@@ -281,11 +281,11 @@ function LockCard({ lockState, onPick, pending }) {
           return (
             <Pressable
               key={opt.key}
-              disabled={pending}
+              disabled={pending || lockDisabled}
               onPress={() => onPick(opt.key)}
               className={`flex-1 items-center justify-center gap-0.5 rounded-lg px-0.5 py-1 active:scale-95 ${
                 selected ? opt.selectedBg : 'bg-transparent'
-              }`}
+              } ${lockDisabled ? 'opacity-40' : ''}`}
             >
               <HugeiconsIcon
                 icon={opt.unlockIcon ? Unlock : Lock}
@@ -314,6 +314,7 @@ export function MetricsRow({
   faultUnitsCount,
   lockState,
   lockPending = false,
+  lockDisabled = false,
   onOpenReports,
   onOpenDevices,
   onOpenMaintenance,
@@ -336,6 +337,7 @@ export function MetricsRow({
         lockState={lockState}
         onPick={onLockPick}
         pending={lockPending}
+        lockDisabled={lockDisabled}
       />
     </View>
   );
